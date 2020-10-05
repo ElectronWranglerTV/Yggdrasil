@@ -1,4 +1,4 @@
-;* Yggdrasil (TM) Core Operating System (8051): String Library - Convert Byte to Hex String
+;* Yggdrasil (TM) Core Operating System (MCS-51): String Library - Convert Byte to Hex String
 ;* Copyright (C) DeRemee Systems, IXE Electronics LLC
 ;* Portions copyright IXE Electronics LLC, Republic Robotics, FemtoLaunch, FemtoSat, FemtoTrack, Weland
 ;* This work is made available under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
