@@ -1,0 +1,93 @@
+;* Yggdrasil (TM) Core Operating System (MCS-51): Silicon Labs C8051F38x Flash Library
+;* Copyright (C) DeRemee Systems, IXE Electronics LLC
+;* Portions copyright IXE Electronics LLC, Republic Robotics, FemtoLaunch, FemtoSat, FemtoTrack, Weland
+;* This work is made available under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
+;* To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-sa/4.0/.
+
+$INCLUDE (System.inc)
+
+PUBLIC  LFLASHCOGET,  LFLASHCOSET,  LFLASHERASE,  LFLASHIFGET,  LFLASHIFSET,  LFLASHWRITE
+
+FLASH_INCL_ROUTINES SEGMENT CODE
+RSEG  FLASH_INCL_ROUTINES
+
+;PSBANK ABSTRACTION
+LFLASHCOGET:
+LFLASHCOSET:
+LFLASHIFGET:
+LFLASHIFSET:
+  CLR   A
+  SETB  C
+  RET
+
+
+;ERASE PAGE CONTAINING FLASH MEMORY ADDRESS
+;ON ENTRY:
+; DPTR  = FLASH ADDRESS
+;ON RETURN:
+; C = 0 IF SUCCESS
+;   A = VALUE ON ENTRY
+; C = 1 IF FAIL
+;   A = VALUE ON ENTRY
+LFLASHERASE PROC
+  ;DISABLE INTERRUPTS
+  PUSH  ACC
+  PUSH  IE
+  CLR   EA
+  ;ERASE LOCATION
+  MOV   A, #0xFF
+  MOV   FLKEY, #FLKEY_0         ;WRITE FLASH KEY 0
+  MOV   FLKEY, #FLKEY_1         ;WRITE FLASH KEY 1
+  ORL   PSCTL, #PSEE            ;ENABLE FLASH ERASE
+  ORL   PSCTL, #PSWE            ;ENABLE FLASH WRITES
+  MOVX  @DPTR, A                ;ERASE LOCATION
+  ANL   PSCTL, #(PSWE XOR 0xFF) ;DISABLE FLASH WRITES
+  ANL   PSCTL, #(PSEE XOR 0xFF) ;DISABLE FLASH ERASE
+  ;RESTORE EA BIT
+  POP   IE
+  ;RETURN
+  POP   ACC
+  CLR   C
+  RET
+ENDP
+
+
+;WRITE BYTE IN A TO FLASH MEMORY
+;ON ENTRY:
+; A     = DATA
+; DPTR  = FLASH ADDRESS
+;ON RETURN:
+; C = 0 IF SUCCESS
+;   A = VALUE ON ENTRY
+; C = 1 IF FAIL
+;   A = VALUE ON ENTRY
+LFLASHWRITE PROC
+    PUSH  ACC
+    ;DETERMINE IF LOCATION NEEDS ERASED
+    CLR   A
+    MOVC  A, @A+DPTR
+    XRL   A, #0FFH
+    JZ    LFLASHWRITEA
+    ;ERROR - LOCATION CONTAINS DATA
+    POP   ACC
+    SETB  C
+    RET
+  LFLASHWRITEA:
+    POP   ACC
+    ;DISABLE INTERRUPTS
+    PUSH  IE
+    CLR   EA
+    ;WRITE DATA TO LOCATION
+    ANL   PFE0CN, #(FLBWE XOR 0xFF) ;DISABLE BLOCK WRITES
+    ORL   PSCTL, #PSWE              ;ENABLE FLASH WRITES
+    ANL   PSCTL, #(PSEE XOR 0xFF)   ;DISABLE FLASH ERASE
+    MOV   FLKEY, #FLKEY_0           ;WRITE FLASH KEY 0
+    MOV   FLKEY, #FLKEY_1           ;WRITE FLASH KEY 1
+    MOVX  @DPTR, A                  ;ERASE LOCATION
+    ANL   PSCTL, #(PSWE XOR 0xFF)   ;DISABLE FLASH WRITES
+    ;RESTORE EA BIT
+    POP   IE
+    ;RETURN
+    CLR   C
+    RET
+ENDP
