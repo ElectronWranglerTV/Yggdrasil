@@ -1,0 +1,248 @@
+;* Yggdrasil (TM) Core Operating System (MCS-51): Silicon Labs C8051F38x Crossbar Library
+;* Copyright (C) DeRemee Systems, IXE Electronics LLC
+;* Portions copyright IXE Electronics LLC, Republic Robotics, FemtoLaunch, FemtoSat, FemtoTrack, Weland
+;* This work is made available under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
+;* To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-sa/4.0/.
+
+$INCLUDE (System.INC)
+
+#include "Ports_ReturnCodes.inc"
+
+PUBLIC  LXBARDIS,       LXBAREN,      LXBARCP0DIS,    LXBARCP0EN
+PUBLIC  LXBARCP0ADIS,   LXBARCP0AEN,  LXBARCP1DIS,    LXBARCP1EN
+PUBLIC  LXBARCP1ADIS,   LXBARCP1AEN,  LXBARPCA0DIS,   LXBARPCA0EN
+PUBLIC  LXBARSMB0DIS,   LXBARSMB0EN,  LXBARSMB1DIS,   LXBARSMB1EN
+PUBLIC  LXBARSPI0DIS,   LXBARSPI0EN,  LXBART0DIS,     LXBART0EN
+PUBLIC  LXBART1DIS,     LXBART1EN,    LXBARRD,        LXBARWR
+PUBLIC  LXBARUART0DIS,  LXBARUART0EN, LXBARUART1DIS,  LXBARUART1EN
+
+XBAR_ROUTINES SEGMENT CODE
+RSEG  XBAR_ROUTINES
+
+LXBARCP0DIS:
+  ANL   XBR0, #(CP0E XOR 0xFF)
+  CLR   C
+  RET
+
+LXBARCP0EN:
+  ORL   XBR0, #CP0E
+  CLR   C
+  RET
+
+LXBARCP0ADIS:
+  ANL   XBR0, #(CP0AE XOR 0xFF)
+  CLR   C
+  RET
+
+LXBARCP0AEN:
+  ORL   XBR0, #CP0AE
+  CLR   C
+  RET
+
+LXBARCP1DIS:
+  ANL   XBR0, #(CP1E XOR 0xFF)
+  CLR   C
+  RET
+
+LXBARCP1EN:
+  ORL   XBR0, #CP1E
+  CLR   C
+  RET
+
+LXBARCP1ADIS:
+  ANL   XBR0, #(CP1AE XOR 0xFF)
+  CLR   C
+  RET
+
+LXBARCP1AEN:
+  ORL   XBR0, #CP1AE
+  CLR   C
+  RET
+
+LXBARDIS:
+  ANL   XBR1, #(XBARE XOR 0xFF)
+  CLR   C
+  RET
+
+LXBAREN:
+  ORL   XBR1, #XBARE
+  CLR   C
+  RET
+
+LXBARPCA0DIS:
+  ANL   XBR1, #(PCA0ME XOR 0xFF)
+  CLR   C
+  RET
+
+;ENABLES THE SELECTED PCA MODULE'S CROSSBAR OUTPUT
+;ON ENTRY:
+;	A	= PCA MODULE NUMBER
+LXBARPCA0EN PROC
+    PUSH  B
+    PUSH  ACC
+    CLR   C
+    SUBB  A, #PCA_0_CHCNT
+    JC    LXBARPCA0ENA
+    POP   ACC
+    POP   B
+    RET
+  LXBARPCA0ENA:
+    MOV   A, #(PCA0ME XOR 0xFF)
+    ANL   A, XBR1
+    POP   B
+    INC   B
+    ORL   A, B
+    MOV   XBR1, A
+    POP   B
+    CLR   C
+    RET
+ENDP
+
+LXBARSMB0DIS:
+  ANL   XBR0, #(SMB0E XOR 0xFF)
+  CLR   C
+  RET
+
+LXBARSMB0EN:
+  ORL   XBR0, #SMB0E
+  CLR   C
+  RET
+
+LXBARSMB1DIS:
+  ANL   XBR2, #(SMB1E XOR 0xFF)
+  CLR   C
+  RET
+
+LXBARSMB1EN:
+  ORL   XBR2, #SMB1E
+  CLR   C
+  RET
+
+LXBARSPI0DIS:
+  ANL   XBR0, #(SPI0E XOR 0xFF)
+  CLR   C
+  RET
+
+LXBARSPI0EN:
+  ORL   XBR0, #SPI0E
+  CLR   C
+  RET
+
+LXBART0DIS:
+  ANL   XBR2, #(T0E XOR 0xFF)
+  CLR   C
+  RET
+
+LXBART0EN:
+  ORL   XBR2, #T0E
+  CLR   C
+  RET
+
+LXBART1DIS:
+  ANL   XBR2, #(T1E XOR 0xFF)
+  CLR   C
+  RET
+
+LXBART1EN:
+  ORL   XBR2, #T1E
+  CLR   C
+  RET
+
+;COPIES THE VALUE IN THE SPECIFIED CROSSBAR REGISTER
+;TO R0
+;ON ENTRY:
+; A = XBAR REGISTER ID
+;ON RETURN:
+; C = 0 IF SUCCESS
+;   A   = 0x00
+;   R0  = VALUE
+; C = 1 IF FAIL
+;   A   = ERROR CODE
+;   R0  = 0x00
+LXBARRD PROC
+    JNZ   LXBARRDB
+    ;PORT 0
+    MOV   R0, XBR0
+    CLR   C
+    CLR   A
+    RET
+  LXBARRDB:
+    DJNZ  ACC, LXBARRDC
+    ;PORT 1
+    MOV   R0, XBR1
+    CLR   C
+    CLR   A
+    RET
+  LXBARRDC:
+    DJNZ  ACC, LXBARRDD
+    ;PORT 2
+    MOV   R0, XBR2
+    CLR   C
+    CLR   A
+    RET
+  LXBARRDD:
+    ;INVALID PORT
+    MOV   A, #PORT_ERR_INV_PORT
+    MOV   R0, #0x00
+    SETB  C
+    RET
+ENDP
+
+;LOAD THE SPECIFIED CROSSBAR REGISTER WITH THE VALUE
+;IN R0
+;ON ENTRY:
+; A   = XBAR REGISTER ID
+; R0  = VALUE
+;ON RETURN:
+; R0  = VALUE ON ENTRY
+; C   = 0 IF SUCCESS
+;   A = 0x00
+; C   = 1 IF FAIL
+;   A = ERROR CODE
+LXBARWR PROC
+    JNZ   LXBARWRB
+    ;PORT 0
+    MOV   XBR0, R0
+    CLR   C
+    CLR   A
+    RET
+  LXBARWRB:
+    DJNZ  ACC, LXBARWRC
+    ;PORT 1
+    MOV   XBR1, R0
+    CLR   C
+    CLR   A
+    RET
+  LXBARWRC:
+    DJNZ  ACC, LXBARWRD
+    ;PORT 2
+    MOV   XBR2, R0
+    CLR   C
+    CLR   A
+    RET
+  LXBARWRD:
+    ;INVALID PORT
+    MOV   A, #PORT_ERR_INV_PORT
+    SETB  C
+    RET
+ENDP
+
+LXBARUART0DIS:
+  ANL   XBR0, #(URT0E XOR 0xFF)
+  CLR   C
+  RET
+
+LXBARUART0EN:
+  ORL   XBR0, #URT0E
+  CLR   C
+  RET
+
+LXBARUART1DIS:
+  ANL   XBR2, #(URT1E XOR 0xFF)
+  CLR   C
+  RET
+
+LXBARUART1EN:
+  ORL   XBR2, #URT1E
+  CLR   C
+  RET
