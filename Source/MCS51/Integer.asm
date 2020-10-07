@@ -1,0 +1,252 @@
+;* Yggdrasil (TM) Core Operating System (MCS-51): Integer Library
+;* Copyright (C) DeRemee Systems, IXE Electronics LLC
+;* Portions copyright IXE Electronics LLC, Republic Robotics, FemtoLaunch, FemtoSat, FemtoTrack, Weland
+;* This work is made available under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
+;* To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-sa/4.0/.
+
+$INCLUDE (System.inc)
+$INCLUDE (Return_Codes_Integer.inc)
+
+INTEGER_ROUTINES  SEGMENT CODE
+RSEG  INTEGER_ROUTINES
+
+EXTRN CODE  (CHAR2INT)
+EXTRN CODE  (MATHWIUADD, MATHWIUMAC, MATHWIUMUL)
+
+PUBLIC  LINTASC2BYTE, LINTASC2WORD, LINTHEX2BYTE, LINTHEX2NIB
+
+;CONVERT 3 DIGIT ASCII VALUE TO BYTE
+;ON ENTRY:
+; R0  = ONES CHARACTER
+; R1  = TENS CHARCTER
+; R2  = HUNDREDS CHARACTER
+;ON RETURN:
+; C = 0 IF SUCCESS
+;   A   = 0x00
+;   R0  = VALUE
+;   R1  = 0x00
+;   R2  = 0x00
+; C = 1 IF FAIL
+;   A   = ERROR CODE
+LINTASC2BYTE  PROC
+  PUSH  B
+  ;CONVERT HUNDREDS
+  MOV   A, R2
+  CLR   C
+  SUBB  A, #0x30
+  MOV   B, #0x0A
+  MUL   AB
+  MOV   R2, A
+  ;CONVERT TENS
+  MOV   A, R1
+  CLR   C
+  SUBB  A, #0x30
+  ADD   A, R2
+  MOV   B, #0x0A
+  MUL   AB
+  MOV   R1, A
+  ;CONVERT ONES
+  MOV   A, R0
+  CLR   C
+  SUBB  A, #0x30
+  ADD   A, R1
+  MOV   R0, A
+  ;RETURN
+  CLR   A
+  MOV   R1, A
+  MOV   R2, A
+  POP   B
+  RET
+ENDP
+
+;CONVERT 5 DIGIT ASCII VALUE TO WORD
+;ON ENTRY:
+; R0  = ONES CHARACTER
+; R1  = TENS CHARCTER
+; R2  = HUNDREDS CHARACTER
+; R3  = THOUSANDS CHARACTER
+; R4  = TEN THOUSANDS CHARACTER
+;ON RETURN:
+; C = 0 IF SUCCESS
+;   A   = 0x00
+;   R0  = VALUE LSB
+;   R1  = VALUE MSB
+;   R2  = 0x00
+;   R3  = 0x00
+;   R4  = 0x00
+; C = 1 IF FAIL
+;   A = ERROR CODE
+LINTASC2WORD  PROC
+    PUSH  B
+    MOV   A, R5
+    PUSH  ACC
+    MOV   A, R0
+    PUSH  ACC
+    MOV   A, R1
+    PUSH  ACC
+    MOV   A, R2
+    PUSH  ACC
+    MOV   A, R3
+    PUSH  ACC
+    ;SETUP
+    CLR   A
+    MOV   R1, A
+    MOV   R2, #0x0A
+    MOV   R3, A
+    XCH   A, R4
+    ;CONVERT TEN THOUSANDS
+    CALL  CHAR2INT
+    JC    LINTASC2WORDA
+    MOV   R0, A
+    ;CONVERT THOUSANDS
+    POP   ACC
+    CALL  CHAR2INT
+    JC    LINTASC2WORDB
+    MOV   R4, A
+    CALL  MATHWIUMAC
+    ;CONVERT HUNDREDS
+    POP   ACC
+    CALL  CHAR2INT
+    JC    LINTASC2WORDC
+    XCH   A, R4
+    MOV   R0, A
+    MOV   A, R5
+    MOV   R1, A
+    MOV   R5, #0x00
+    CALL  MATHWIUMAC
+    ;CONVERT TENS
+    POP   ACC
+    CALL  CHAR2INT
+    JC    LINTASC2WORDC
+    XCH   A, R4
+    MOV   R0, A
+    MOV   A, R5
+    MOV   R1, A
+    MOV   R5, #0x00
+    CALL  MATHWIUMAC
+    ;CONVERT ONES
+    POP   ACC
+    CALL  CHAR2INT
+    JC    LINTASC2WORDC
+    XCH   A, R4
+    MOV   R0, A
+    MOV   A, R5
+    MOV   R1, A
+    MOV   R5, #0x00
+    CALL  MATHWIUMAC
+    MOV   A, R4
+    MOV   R0, A
+    MOV   A, R5
+    MOV   R1, A
+    ;RESTORE REGISTERS & RETURN WITH SUCCESS
+    CLR   A
+    MOV   R2, A
+    MOV   R3, A
+    MOV   R4, A
+    CLR   C
+    POP   ACC
+    MOV   R5, A
+    POP   B
+    RET
+    ;RESTORE REGISTERS & RETURN WITH ERROR
+  LINTASC2WORDA:
+    POP   ACC
+  LINTASC2WORDB:
+    POP   ACC
+  LINTASC2WORDC:
+    POP   ACC
+  LINTASC2WORDD:
+    POP   ACC
+  LINTASC2WORDE:
+    CLR   A
+    MOV   R0, A
+    MOV   R1, A
+    MOV   R2, A
+    MOV   R3, A
+    MOV   R4, A
+    POP   ACC
+    MOV   R5, A
+    MOV   A, #INT_ERR_NOT_NUMBER
+    POP   B
+    RET
+ENDP
+
+
+;CONVERT 2 DIGIT HEX VALUE TO BYTE
+;ON ENTRY:
+; R0 = LEAST SIGNIFICANT DIGIT
+; R1 = MOST SIGNIFICANT DIGIT
+;ON RETURN:
+; C = 0 IF SUCCESS
+;   A   = VALUE
+;   R0  = VALUE ON ENTRY
+;   R1  = VALUE ON ENTRY
+; C = 1 IF R0 OR R1 CONTAIN INVALID CHARACTERS
+;   A = 0x00
+LINTHEX2BYTE  PROC
+    PUSH  B
+    MOV   A, R0
+    CALL  LINTHEX2NIB
+    JC    LINTHEX2BYTEA
+    MOV   B, A
+    MOV   A, R1
+    CALL  LINTHEX2NIB
+    JC    LINTHEX2BYTEA
+    SWAP  A
+    ORL   A, B
+  LINTHEX2BYTEA:
+    POP   B
+    RET
+ENDP
+
+
+;CONVERT SINGLE DIGIT HEX VALUE TO NIBBLE
+;ON ENTRY:
+; A = ASCII CHARACTER
+;ON RETURN:
+; C = 0 IF SUCCESS
+;   ACC.0-ACC.3 = VALUE
+; C = 1 IF A CONTAINS INVALID CHARACTER
+;   A = 0x00
+LINTHEX2NIB PROC
+    ;CHECK FOR LESS THAN 0x30 ("0")
+    CLR   C
+    SUBB  A, #0x30
+    JC    LINTHEX2NIBA
+    ;CHECK FOR GREATER THAN 0x09 ("9")
+    PUSH  ACC
+    CLR   C
+    SUBB  A, #0x0A
+    POP   ACC
+    JC    LINTHEX2NIBB
+    ;CHECK FOR LESS THAN 0x07 ("A")
+    CLR   C
+    SUBB  A, #0x07
+    JC    LINTHEX2NIBA
+    ;CHECK FOR GREATER THAN 0x05 ("F")
+    PUSH  ACC
+    CLR   C
+    SUBB  A, #0x10
+    POP   ACC
+    JC    LINTHEX2NIBB
+    ;CHECK FOR LESS THAN 0x1A ("a")
+    CLR   C
+    SUBB  A, #0x1A
+    JC    LINTHEX2NIBA
+    ;CHECK FOR GREATER THAN 0x05 ("f")
+    PUSH  ACC
+    CLR   C
+    SUBB  A, #0x06
+    POP   ACC
+    JC    LINTHEX2NIBB		
+  LINTHEX2NIBA:
+    ;RETURN WITH ERROR
+    CLR   A
+    RET
+  LINTHEX2NIBB:
+    ;RETURN WITHOUT ERROR
+    CLR   C
+    RET
+ENDP
+
+END
