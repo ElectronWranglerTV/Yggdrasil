@@ -1,0 +1,1339 @@
+;* Yggdrasil (TM) Core Operating System: Advanced Encryption Standard (AES) Library
+;* Copyright (CF) DeRemee Systems, IXE Electronics LLC
+;* Portions copyright IXE Electronics LLC, Republic Robotics, FemtoLaunch, FemtoSat, FemtoTrack, Weland
+;* This work is made available under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
+;* To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-sa/4.0/.
+;* Implements NIST FIPS 197 available at:
+;* https://csrc.nist.gov/csrc/media/publications/fips/197/final/documents/fips-197.pdf
+
+;This library is not optimized for speed or code size. It is written so it is
+;easy for users to understand how it functions.
+;Only 128-bit encryption/decryption are fully implemented at this time.
+
+$INCLUDE (System.INC)
+
+EXTRN	CODE	(MEMALCXRAM, MEMFREEXRAM)
+
+PUBLIC	LAESCIPHER128, LAESINVCIPHER128
+
+AES_ROUTINES	SEGMENT		CODE
+
+RSEG	AES_ROUTINES
+
+
+	;* - INDICATES FUNCTIONS AVAILABLE TO USER PROGRAMS
+
+	;XORS THE STATE WITH A ROUNDKEY
+	;ON ENTRY:
+	;	DPTR	= STATE ADDRESS
+	;	R0		= ROUNDKEY ADDRESS LSB
+	;	R1		= ROUNDKEY ADDRESS MSB
+	;	R2		= ROUND NUMBER
+	;ON RETURN:
+	;	DPTR	= VALUE ON ENTRY
+	;	R0		= VALUE ON ENTRY
+	;	R1		= VALUE ON ENTRY
+	;	R2		= VALUE ON ENTRY
+	AESADDROUNDKEY	PROC
+			;SAVE REGISTERS
+			PUSH	DPL
+			PUSH	DPH
+			MOV		A, R0
+			PUSH	ACC
+			MOV		A, R1
+			PUSH	ACC
+			MOV		A, R2
+			PUSH	ACC
+			MOV		A, R4
+			PUSH	ACC
+			MOV		A, R5
+			PUSH	ACC
+			MOV		A, R6
+			PUSH	ACC
+			MOV		A, R7
+			PUSH	ACC
+			;CALCULATE ROUND'S ROUNDKEY ADDRESS
+			MOV		A, R2
+			RL		A
+			RL		A
+			RL		A
+			RL		A
+			ADD		A, R0
+			MOV		R0, A
+			CLR		A
+			ADDC	A, R1
+			MOV		R1, A
+			;LOAD LOOP COUNT
+			MOV		R2, #0x04
+		AESADDROUNDKEYA:
+			;LOAD WORD FROM STATE
+			PUSH	DPL
+			PUSH	DPH
+			CALL	AESWORDLOAD
+			XCH		A, DPL
+			XCH		A, R0
+			XCH		A, DPL
+			XCH		A, DPH
+			XCH		A, R1
+			XCH		A, DPH
+			;XOR WORD FROM STATE WITH WORD FROM KEY SCHEDULE
+			MOVX	A, @DPTR
+			INC		DPTR
+			XRL		A, R7
+			MOV		R7, A
+			MOVX	A, @DPTR
+			INC		DPTR
+			XRL		A, R6
+			MOV		R6, A
+			MOVX	A, @DPTR
+			INC		DPTR
+			XRL		A, R5
+			MOV		R5, A
+			MOVX	A, @DPTR
+			INC		DPTR
+			XRL		A, R4
+			MOV		R4, A
+			;STORE RESULT IN STATE
+			XCH		A, DPL
+			XCH		A, R0
+			XCH		A, DPL
+			XCH		A, DPH
+			XCH		A, R1
+			XCH		A, DPH
+			POP		DPH
+			POP		DPL
+			CALL	AESWORDSTORE
+			;
+			DJNZ	R2, AESADDROUNDKEYA
+			;RESTORE REGISTERS & RETURN
+			POP		ACC
+			MOV		R7, A
+			POP		ACC
+			MOV		R6, A
+			POP		ACC
+			MOV		R5, A
+			POP		ACC
+			MOV		R4, A
+			POP		ACC
+			MOV		R2, A
+			POP		ACC
+			MOV		R1, A
+			POP		ACC
+			MOV		R0, A
+			POP		DPH
+			POP		DPL
+			RET
+	ENDP
+
+	;EXPAND A 16-BYTE KEY FOR A 128-BIT AES OPERATION
+	;ON ENTRY:
+	;	DPTR	= EXPANSION ADDRESS
+	;ON RETURN:
+	;	DPTR	= VALUE ON ENTRY
+	AESEXPAND128	PROC
+			;SAVE REGISTERS
+			PUSH	DPL
+			PUSH	DPH
+			MOV		A, R2
+			PUSH	ACC
+			MOV		A, R4
+			PUSH	ACC
+			MOV		A, R5
+			PUSH	ACC
+			MOV		A, R6
+			PUSH	ACC
+			MOV		A, R7
+			PUSH	ACC
+			;LOAD WORD COUNT
+			MOV		R2, #0x28
+			;POINT TO W[I + 4]
+			MOV		A, #0x10
+			ADD		A, DPL
+			MOV		DPL, A
+			CLR		A
+			ADDC	A, DPH
+			MOV		DPH, A
+		AESEXPAND128A:
+			;SAVE EXPANSION ADDRESS
+			PUSH	DPL
+			PUSH	DPH
+			;POINT TO W[I - 1]
+			MOV		A, DPL
+			CLR		C
+			SUBB	A, #0x04
+			MOV		DPL, A
+			MOV		A, DPH
+			SUBB	A, #0x00
+			MOV		DPH, A
+			;LOAD W[I - 1]
+			CALL	AESWORDLOAD
+			;I MOD 4 == 0?
+			MOV		A, #0x03
+			ANL		A, R2
+			JNZ		AESEXPAND128B
+			;I MOD 4 == 0
+			;ROTATE WORD
+			MOV		A, R7
+			XCH		A, R4
+			XCH		A, R5
+			XCH		A, R6
+			MOV		R7, A
+			;SUBSTITUTE WORD BYTES
+			CALL	AESSUBWORD
+			;DO RCON
+			PUSH	DPL
+			PUSH	DPH
+			MOV		A, #0x28
+			CLR		C
+			SUBB	A, R2
+			RR		A
+			RR		A
+			MOV		DPTR, #AESRCONST
+			MOVC	A, @A+DPTR
+			XRL		A, R7
+			MOV		R7, A
+			CLR		A
+			XRL		A, R6
+			MOV		R6, A
+			CLR		A
+			XRL		A, R5
+			MOV		R5, A
+			CLR		A
+			XRL		A, R4
+			MOV		R4, A	
+			POP		DPH
+			POP		DPL
+		AESEXPAND128B:
+			;POINT TO W[I - 4]
+			MOV		A, DPL
+			CLR		C
+			SUBB	A, #0x10
+			MOV		DPL, A
+			MOV		A, DPH
+			SUBB	A, #0x00
+			MOV		DPH, A
+			;XOR RESULT WITH DWORD[I - 4]
+			MOVX	A, @DPTR
+			INC		DPTR
+			XRL		A, R7
+			MOV		R7, A
+			MOVX	A, @DPTR
+			INC		DPTR
+			XRL		A, R6
+			MOV		R6, A
+			MOVX	A, @DPTR
+			INC		DPTR
+			XRL		A, R5
+			MOV		R5, A
+			MOVX	A, @DPTR
+			INC		DPTR
+			XRL		A, R4
+			MOV		R4, A
+			;STORE DWORD
+			POP		DPH
+			POP		DPL
+			CALL	AESWORDSTORE
+			;LAST WORD?
+			DJNZ	R2, AESEXPAND128A
+			;RESTORE REGISTERS & RETURN
+			POP		ACC
+			MOV		R7, A
+			POP		ACC
+			MOV		R6, A
+			POP		ACC
+			MOV		R5, A
+			POP		ACC
+			MOV		R4, A
+			POP		ACC
+			MOV		R2, A
+			POP		DPH
+			POP		DPL
+			RET
+	ENDP
+
+	;EXPAND A 32-BYTE KEY FOR A 256-BIT AES OPERATION
+	;ON ENTRY:
+	;	DPTR	= EXPANSION ADDRESS
+	;ON RETURN:
+	;	DPTR	= VALUE ON ENTRY
+	AESEXPAND256	PROC
+			;SAVE REGISTERS
+			PUSH	DPL
+			PUSH	DPH
+			MOV		A, R2
+			PUSH	ACC
+			MOV		A, R4
+			PUSH	ACC
+			MOV		A, R5
+			PUSH	ACC
+			MOV		A, R6
+			PUSH	ACC
+			MOV		A, R7
+			PUSH	ACC
+			;LOAD WORD COUNT
+			MOV		R2, #0x34
+			;POINT TO W[I + 4]
+			MOV		A, #0x20
+			ADD		A, DPL
+			MOV		DPL, A
+			CLR		A
+			ADDC	A, DPH
+			MOV		DPH, A
+		AESEXPAND256A:
+			;SAVE EXPANSION ADDRESS
+			PUSH	DPL
+			PUSH	DPH
+			;POINT TO W[I - 1]
+			MOV		A, DPL
+			CLR		C
+			SUBB	A, #0x04
+			MOV		DPL, A
+			MOV		A, DPH
+			SUBB	A, #0x00
+			MOV		DPH, A
+			;LOAD W[I - 1]
+			CALL	AESWORDLOAD
+			;I MOD 8 == 0?
+			MOV		A, R2
+			ADD		A, #0x04
+			ANL		A, #0x07
+			JNZ		AESEXPAND256B
+			;I MOD 4 == 0
+			;ROTATE WORD
+			MOV		A, R7
+			XCH		A, R4
+			XCH		A, R5
+			XCH		A, R6
+			MOV		R7, A
+			;SUBSTITUTE WORD BYTES
+			CALL	AESSUBWORD
+			;DO RCON
+			PUSH	DPL
+			PUSH	DPH
+			MOV		A, #0x34
+			CLR		C
+			SUBB	A, R2
+			RR		A
+			RR		A
+			RR		A
+			MOV		DPTR, #AESRCONST
+			MOVC	A, @A+DPTR
+			XRL		A, R7
+			MOV		R7, A
+			CLR		A
+			XRL		A, R6
+			MOV		R6, A
+			CLR		A
+			XRL		A, R5
+			MOV		R5, A
+			CLR		A
+			XRL		A, R4
+			MOV		R4, A	
+			POP		DPH
+			POP		DPL
+			SJMP	AESEXPAND256C
+		AESEXPAND256B:
+			ANL		A, #0x03
+			JNZ		AESEXPAND256C
+			;SUBSTITUTE WORD BYTES
+			CALL	AESSUBWORD
+		AESEXPAND256C:
+			;POINT TO W[I - 4]
+			MOV		A, DPL
+			CLR		C
+			SUBB	A, #0x20
+			MOV		DPL, A
+			MOV		A, DPH
+			SUBB	A, #0x00
+			MOV		DPH, A
+			;XOR RESULT WITH DWORD[I - 4]
+			MOVX	A, @DPTR
+			INC		DPTR
+			XRL		A, R7
+			MOV		R7, A
+			MOVX	A, @DPTR
+			INC		DPTR
+			XRL		A, R6
+			MOV		R6, A
+			MOVX	A, @DPTR
+			INC		DPTR
+			XRL		A, R5
+			MOV		R5, A
+			MOVX	A, @DPTR
+			INC		DPTR
+			XRL		A, R4
+			MOV		R4, A
+			;STORE DWORD
+			POP		DPH
+			POP		DPL
+			CALL	AESWORDSTORE
+			;LAST WORD?
+			DJNZ	R2, AESEXPAND256A
+			;RESTORE REGISTERS & RETURN
+			POP		ACC
+			MOV		R7, A
+			POP		ACC
+			MOV		R6, A
+			POP		ACC
+			MOV		R5, A
+			POP		ACC
+			MOV		R4, A
+			POP		ACC
+			MOV		R2, A
+			POP		DPH
+			POP		DPL
+			RET
+	ENDP
+
+	;*PERFORMS A 128-BIT CIPHER ON 16 BYTES OF DATA
+	;BOTH THE KEY AND INPUT DATA ARE ZEROIZED ON RETURN
+	;OPTIONS ALLOW THE USER TO DISABLE CONTEXT SWITCHES
+	;AND/OR INTERRUPTS DURING THE ENCRYPTION CYCLE
+	;DISABLING EITHER RESULTS IN SLOWER RESPONSE TO EVENTS
+	;ON ENTRY:
+	;	A			= OPTIONS
+	;	DPTR	= KEY ADDRESS
+	;	R0		= INPUT ADDRESS LSB
+	;	R1		= INPUT ADDRESS MSB
+	;	R2		= OUTPUT ADDRESS LSB
+	;	R3		= OUTPUT ADDRESS MSB
+	;ON RETURN:
+	;	DPTR	= 0x0000
+	;	R0		= 0x00
+	;	R1		= 0x00
+	;	R2		= 0x00
+	;	R3		= 0x00
+	;	C	= 0 IF SUCCESS
+	;		A	= 0x00
+	;	C	= 1 IF FAIL
+	;		A	= ERROR CODE
+	LAESCIPHER128	PROC
+			;SAVE REGISTERS
+			PUSH	B
+			MOV		A, R4
+			PUSH	ACC
+			MOV		A, R5
+			PUSH	ACC
+			MOV		A, R7
+			PUSH	ACC
+			MOV		A, R2
+			PUSH	ACC
+			MOV		A, R3
+			PUSH	ACC
+			;ALLOCATE MEMORY FOR KEY EXPANSION & STATES
+			MOV		A, R0
+			MOV		R4, A
+			MOV		A, R1
+			MOV		R5, A
+			MOV		R0, #0xD0
+			MOV		R1, #0x00
+			CALL	MEMALCXRAM
+			JNC		LAESCIPHER128B
+			;ERROR - COULD NOT ALLOCATE MEMORY
+			POP		ACC
+			MOV		R3, A
+			POP		ACC
+			MOV		R2, A
+			POP		ACC
+			MOV		R7, A
+			POP		ACC
+			MOV		R5, A
+			POP		ACC
+			MOV		R4, A
+			POP		B
+			RET
+		LAESCIPHER128B:
+			;COPY KEY TO EXPANSION ADDRESS & ZEROIZE ORIGINAL
+			MOV		A, R0
+			MOV		R4, A
+			MOV		A, R1
+			MOV		R5, A
+			MOV		R7, #0x10
+		LAESCIPHER128C:
+			MOVX	A, @DPTR
+			MOV		B, A
+			CLR		A
+			MOVX	@DPTR, A
+			MOV		A, B
+			INC		DPTR
+			CALL	DPTRXCHG01
+			MOVX	@DPTR, A
+			INC		DPTR
+			CALL	DPTRXCHG01
+			DJNZ	R7, LAESCIPHER128C
+			;COPY INPUT TO STATE 0 & ZEROIZE ORIGINAL
+			MOV		A, #0xA0
+			ADD		A, R0
+			MOV		R0, A
+			CLR		A
+			ADDC	A, R1
+			MOV		R1, A
+			MOV		R7, #0x10
+		LAESCIPHER128D:
+			MOVX	A, @DPTR
+			MOV		B, A
+			CLR		A
+			MOVX	@DPTR, A
+			MOV		A, B
+			INC		DPTR
+			CALL	DPTRXCHG01
+			MOVX	@DPTR, A
+			INC		DPTR
+			CALL	DPTRXCHG01
+			DJNZ	R7, LAESCIPHER128D
+			;EXPAND KEY
+			MOV		DPL, R4
+			MOV		DPH, R5
+			CALL	AESEXPAND128
+			;SET UP FOR CIPHER ROUNDS
+			;LOAD ROUND COUNT
+			MOV		R7, #0x09
+			;
+			MOV		A, R0
+			MOV		R4, A
+			MOV		A, R1
+			MOV		R5, A
+			;CALCULATE STATE 0 ADDRESS
+			MOV		A, DPL
+			MOV		R0, A
+			ADD		A, #0xB0
+			MOV		DPL, A
+			MOV		A, DPH
+			MOV		R1, A
+			ADDC	A, #0x00
+			MOV		DPH, A
+			;PERFORM 10 CIPHER ROUNDS
+		LAESCIPHER128E:
+			MOV		A, #0x09
+			CLR		C
+			SUBB	A, R7
+			MOV		R2, A
+			CALL	AESADDROUNDKEY
+			CALL	AESSUBBYTES
+			XCH		A, R0
+			XCH		A, DPL
+			XCH		A, R0
+			XCH		A, R1
+			XCH		A, DPH
+			XCH		A, R1
+			MOV		A, R4
+			MOV		R2, A
+			MOV		A, R5
+			MOV		R3, A
+			CLR		A
+			CALL	AESSHIFTROWS
+			XCH		A, R0
+			XCH		A, R2
+			XCH		A, R0
+			XCH		A, R1
+			XCH		A, R3
+			XCH		A, R1
+			CALL	AESMIXCOLS
+			MOV		R0, DPL
+			MOV		R1, DPH
+			MOV		DPL, R2
+			MOV		DPH, R3
+			DJNZ	R7, LAESCIPHER128E
+			;PERFORM 11TH CIPHER ROUND
+			MOV		R2, #0x09
+			CALL	AESADDROUNDKEY
+			CALL	AESSUBBYTES
+			XCH		A, R0
+			XCH		A, DPL
+			XCH		A, R0
+			XCH		A, R1
+			XCH		A, DPH
+			XCH		A, R1
+			MOV		A, R4
+			MOV		R2, A
+			MOV		A, R5
+			MOV		R3, A
+			CLR		A
+			CALL	AESSHIFTROWS
+			XCH		A, R0
+			XCH		A, DPL
+			XCH		A, R0
+			XCH		A, R1
+			XCH		A, DPH
+			XCH		A, R1
+			XCH		A, R4
+			XCH		A, DPL
+			XCH		A, R4
+			XCH		A, R5
+			XCH		A, DPH
+			XCH		A, R5
+			MOV		R2, #0x0A
+			CALL	AESADDROUNDKEY
+			;STORE RESULT
+			POP		ACC
+			MOV		R5, A
+			POP		ACC
+			MOV		R4, A
+			MOV		R7, #0x10
+		LAESCIPHER128F:
+			MOVX	A, @DPTR
+			INC		DPTR
+			XCH		A, R4
+			XCH		A, DPL
+			XCH		A, R4
+			XCH		A, R5
+			XCH		A, DPH
+			XCH		A, R5
+			MOVX	@DPTR, A
+			INC		DPTR
+			XCH		A, R4
+			XCH		A, DPL
+			XCH		A, R4
+			XCH		A, R5
+			XCH		A, DPH
+			XCH		A, R5
+			DJNZ	R7, LAESCIPHER128F
+			;ZEROIZE WORKING MEMORY
+			MOV		DPL, R0
+			MOV		DPH, R1
+			MOV		R7, #0xD0
+			CLR		A
+		LAESCIPHER128G:
+			MOVX	@DPTR, A
+			INC		DPTR
+			DJNZ	R7, LAESCIPHER128G
+			;FREE WORKING MEMORY
+			MOV		R2, #0xD0
+			MOV		R3, #0x00
+			CALL	MEMFREEXRAM
+			;ZEROIZE WORKING REGISTERS
+			CLR		A
+			MOV		R0, A
+			MOV		R1, A
+			MOV		R2, A
+			MOV		R3, A
+			MOV		DPTR, #0x0000
+			;RESTORE REGISTERS & RETURN
+			POP		ACC
+			MOV		R7, A
+			POP		ACC
+			MOV		R5, A
+			POP		ACC
+			MOV		R4, A
+			POP		B
+			RET
+	ENDP
+
+
+	;*PERFORMS A 128-BIT INVERSE CIPHER ON 16 BYTES OF DATA
+	;BOTH THE KEY AND INPUT DATA ARE ZEROIZED ON RETURN
+	;OPTIONS ALLOW THE USER TO DISABLE CONTEXT SWITCHES
+	;AND/OR INTERRUPTS DURING THE ENCRYPTION CYCLE
+	;DISABLING EITHER RESULTS IN SLOWER RESPONSE TO EVENTS
+	;ON ENTRY:
+	;	A			= OPTIONS
+	;	DPTR	= KEY ADDRESS
+	;	R0		= INPUT ADDRESS LSB
+	;	R1		= INPUT ADDRESS MSB
+	;	R2		= OUTPUT ADDRESS LSB
+	;	R3		= OUTPUT ADDRESS MSB
+	;ON RETURN:
+	;	DPTR	= 0x0000
+	;	R0		= 0x00
+	;	R1		= 0x00
+	;	R2		= 0x00
+	;	R3		= 0x00
+	;	C	= 0 IF SUCCESS
+	;		A	= 0x00
+	;	C	= 1 IF FAIL
+	;		A	= ERROR CODE
+	LAESINVCIPHER128	PROC
+			;SAVE REGISTERS
+			PUSH	B
+			MOV		A, R4
+			PUSH	ACC
+			MOV		A, R5
+			PUSH	ACC
+			MOV		A, R7
+			PUSH	ACC
+			MOV		A, R2
+			PUSH	ACC
+			MOV		A, R3
+			PUSH	ACC
+			;ALLOCATE MEMORY FOR KEY EXPANSION & STATES
+			MOV		A, R0
+			MOV		R4, A
+			MOV		A, R1
+			MOV		R5, A
+			MOV		R0, #0xD0
+			MOV		R1, #0x00
+			CALL	MEMALCXRAM
+			JNC		LAESINVCIPHER128B
+			;ERROR - COULD NOT ALLOCATE MEMORY
+			POP		ACC
+			MOV		R3, A
+			POP		ACC
+			MOV		R2, A
+			POP		ACC
+			MOV		R7, A
+			POP		ACC
+			MOV		R5, A
+			POP		ACC
+			MOV		R4, A
+			POP		B
+			RET
+		LAESINVCIPHER128B:
+			;COPY KEY TO EXPANSION ADDRESS & ZEROIZE ORIGINAL
+			MOV		A, R0
+			MOV		R4, A
+			MOV		A, R1
+			MOV		R5, A
+			MOV		R7, #0x10
+		LAESINVCIPHER128C:
+			MOVX	A, @DPTR
+			MOV		B, A
+			CLR		A
+			MOVX	@DPTR, A
+			MOV		A, B
+			INC		DPTR
+			CALL	DPTRXCHG01
+			MOVX	@DPTR, A
+			INC		DPTR
+			CALL	DPTRXCHG01
+			DJNZ	R7, LAESINVCIPHER128C
+			;COPY INPUT TO STATE 0 & ZEROIZE ORIGINAL
+			MOV		A, #0xA0
+			ADD		A, R0
+			MOV		R0, A
+			CLR		A
+			ADDC	A, R1
+			MOV		R1, A
+			MOV		R7, #0x10
+		LAESINVCIPHER128D:
+			MOVX	A, @DPTR
+			MOV		B, A
+			CLR		A
+			MOVX	@DPTR, A
+			MOV		A, B
+			INC		DPTR
+			CALL	DPTRXCHG01
+			MOVX	@DPTR, A
+			INC		DPTR
+			CALL	DPTRXCHG01
+			DJNZ	R7, LAESINVCIPHER128D
+			;EXPAND KEY
+			MOV		DPL, R4
+			MOV		DPH, R5
+			CALL	AESEXPAND128
+			;SET UP FOR INVERSE CIPHER ROUNDS
+			;LOAD ROUND COUNT
+			MOV		R7, #0x09
+			;
+			MOV		A, R0
+			MOV		R4, A
+			MOV		A, R1
+			MOV		R5, A
+			;CALCULATE STATE 0 ADDRESS
+			MOV		A, DPL
+			MOV		R0, A
+			ADD		A, #0xB0
+			MOV		DPL, A
+			MOV		A, DPH
+			MOV		R1, A
+			ADDC	A, #0x00
+			MOV		DPH, A
+			MOV		R2, #0x0A
+			;PERFORM 10 CIPHER ROUNDS
+		LAESINVCIPHER128E:
+			CALL	AESADDROUNDKEY
+			MOV		A, R4
+			MOV		R2, A
+			MOV		A, R5
+			MOV		R3, A
+			XCH		A, R0
+			XCH		A, DPL
+			XCH		A, R0
+			XCH		A, R1
+			XCH		A, DPH
+			XCH		A, R1
+		LAESINVCIPHER128F:
+			MOV		A, #0xFF
+			CALL	AESSHIFTROWS
+			XCH		A, R2
+			XCH		A, DPL
+			XCH		A, R2
+			XCH		A, R3
+			XCH		A, DPH
+			XCH		A, R3
+			CALL	AESINVSUBBYTES
+			XCH		A, R0
+			XCH		A, R2
+			XCH		A, R0
+			XCH		A, R1
+			XCH		A, R3
+			XCH		A, R1
+			XCH		A, R2
+			XCH		A, R7
+			XCH		A, R2
+			CALL	AESADDROUNDKEY
+			XCH		A, R2
+			XCH		A, R7
+			XCH		A, R2
+			XCH		A, R0
+			XCH		A, DPL
+			XCH		A, R0
+			XCH		A, R1
+			XCH		A, DPH
+			XCH		A, R1
+			CALL	AESMIXCOLS
+			XCH		A, R0
+			XCH		A, R2
+			XCH		A, R0
+			XCH		A, R1
+			XCH		A, R3
+			XCH		A, R1
+			CALL	AESMIXCOLS
+			XCH		A, R0
+			XCH		A, R2
+			XCH		A, R0
+			XCH		A, R1
+			XCH		A, R3
+			XCH		A, R1
+			CALL	AESMIXCOLS
+			XCH		A, R0
+			XCH		A, R2
+			XCH		A, R0
+			XCH		A, R1
+			XCH		A, R3
+			XCH		A, R1
+			DJNZ	R7, LAESINVCIPHER128F
+			;PERFORM FINAL OPERATIONS
+			MOV		A, #0xFF
+			CALL	AESSHIFTROWS
+			XCH		A, R2
+			XCH		A, DPL
+			XCH		A, R2
+			XCH		A, R3
+			XCH		A, DPH
+			XCH		A, R3
+			CALL	AESINVSUBBYTES
+			MOV		A, R2
+			MOV		R0, A
+			MOV		A, R3
+			MOV		R1, A
+			MOV		R2, #0x00
+			CALL	AESADDROUNDKEY
+			;COPY RESULT TO DESTINATION
+			POP		ACC
+			MOV		R5, A
+			POP		ACC
+			MOV		R4, A
+			MOV		R7, #0x10
+		LAESINVCIPHER128G:
+			MOVX	A, @DPTR
+			INC		DPTR
+			XCH		A, R4
+			XCH		A, DPL
+			XCH		A, R4
+			XCH		A, R5
+			XCH		A, DPH
+			XCH		A, R5
+			MOVX	@DPTR, A
+			INC		DPTR
+			XCH		A, R4
+			XCH		A, DPL
+			XCH		A, R4
+			XCH		A, R5
+			XCH		A, DPH
+			XCH		A, R5
+			DJNZ	R7, LAESINVCIPHER128G
+			;ZEROIZE WORKING RAM
+			MOV		DPL, R0
+			MOV		DPH, R1
+			MOV		R7, #0xD0
+			CLR		A
+		LAESINVCIPHER128H:
+			MOVX	@DPTR, A
+			INC		DPTR
+			DJNZ	R7, LAESINVCIPHER128H
+			;FREE WORKING RAM
+			MOV		R2, #0xD0
+			MOV		R3, A
+			CALL	MEMFREEXRAM
+			;RESTORE REGISTERS & RETURN
+			POP		ACC
+			MOV		R7, A
+			POP		ACC
+			MOV		R5, A
+			POP		ACC
+			MOV		R4, A
+			POP		B
+			RET
+	ENDP
+
+
+	;MIXES COLUMNS
+	;ON ENTRY:
+	;	R0	= IN STATE ADDRESS LSB
+	;	R1	= IN STATE ADDRESS MSB
+	;	R2	= OUT STATE ADDRESS LSB
+	;	R3	= OUT STATE ADDRESS MSB
+	;ON RETURN:
+	;	R0	= VALUE ON ENTRY
+	;	R1	= VALUE ON ENTRY
+	;	R2	= VALUE ON ENTRY
+	;	R3	= VALUE ON ENTRY
+	AESMIXCOLS	PROC
+			;SAVE REGISTERS
+			PUSH	DPL
+			PUSH	DPH
+			MOV		A, R2
+			PUSH	ACC
+			MOV		A, R3
+			PUSH	ACC
+			MOV		A, R4
+			PUSH	ACC
+			MOV		A, R5
+			PUSH	ACC
+			MOV		A, R6
+			PUSH	ACC
+			MOV		A, R7
+			PUSH	ACC
+			MOV		A, R0
+			PUSH	ACC
+			MOV		A, R1
+			PUSH	ACC
+			;
+			MOV		DPL, R0
+			MOV		DPH, R1
+			MOV		R7, #0x04
+		AESMIXCOLSA:
+			;LOAD IN STATE COLUMN DATA
+			MOVX	A, @DPTR	;LOAD S(0, C)
+			MOV		R0, A
+			INC		DPTR
+			MOVX	A, @DPTR	;LOAD S(1, C)
+			MOV		R1, A
+			INC		DPTR
+			MOVX	A, @DPTR	;LOAD S(2, C)
+			MOV		R4, A
+			INC		DPTR
+			MOVX	A, @DPTR	;LOAD S(3, C)
+			MOV		R5, A
+			INC		DPTR
+			;CALCULATE S(0, C) = 2S(0, C) XOR 3S(1, C) XOR S(2,C) XOR S(3,C)
+			XRL		A, R4
+			XRL		A, R1
+			MOV		R6, A
+			MOV		A, R1
+			ADD		A, R1
+			JNC		AESMIXCOLSB
+			XRL		A, #0x1B
+		AESMIXCOLSB:
+			XRL		A, R6
+			MOV		R6, A
+			MOV		A, R0
+			ADD		A, R0
+			JNC		AESMIXCOLSC
+			XRL		A, #0x1B
+		AESMIXCOLSC:
+			XRL		A, R6
+			;STORE S(0, C)
+			XCH		A, DPL
+			XCH		A, R2
+			XCH		A, DPL
+			XCH		A, DPH
+			XCH		A, R3
+			XCH		A, DPH
+			MOVX	@DPTR, A
+			INC		DPTR
+			;CALCULATE S(1, C) = S(0, C) XOR 2S(1, C) XOR 3S(2, C) XOR S(3, C)
+			MOV		A, R5
+			XRL		A, R4
+			MOV		R6, A
+			MOV		A, R4
+			ADD		A, R4
+			JNC		AESMIXCOLSD
+			XRL		A, #0x1B
+		AESMIXCOLSD:
+			XRL		A, R6
+			MOV		R6, A
+			MOV		A, R1
+			ADD		A, R1
+			JNC		AESMIXCOLSE
+			XRL		A, #0x1B
+		AESMIXCOLSE:
+			XRL		A, R6
+			XRL		A, R0
+			;STORE S(1, C)
+			MOVX	@DPTR, A
+			INC		DPTR
+			;CALCULATE S(2, C) = S(0, C) XOR S(1, C) XOR 2S(2, C) XOR 3S(2, C)
+			MOV		A, R5
+			ADD		A, R5
+			JNC		AESMIXCOLSF
+			XRL		A, #0x1B
+		AESMIXCOLSF:
+			XRL		A, R5
+			MOV		R6, A
+			MOV		A, R4
+			ADD		A, R4
+			JNC		AESMIXCOLSG
+			XRL		A, #0x1B
+		AESMIXCOLSG:
+			XRL		A, R6
+			XRL		A, R1
+			XRL		A, R0
+			;STORE S(2, C)
+			MOVX	@DPTR, A
+			INC		DPTR
+			;CALCULATE S(3, C) = 3S(0, C) XOR S(1, C) XOR S(2, C) XOR 2S(2, C)
+			MOV		A, R0
+			ADD		A, R0
+			JNC		AESMIXCOLSH
+			XRL		A, #0x1B
+		AESMIXCOLSH:
+			XRL		A, R0
+			MOV		R6, A
+			MOV		A, R5
+			ADD		A, R5
+			JNC		AESMIXCOLSI
+			XRL		A, #0x1B
+		AESMIXCOLSI:
+			XRL		A, R6
+			XRL		A, R1
+			XRL		A, R4
+			;STORE S(3, C)
+			MOVX		@DPTR, A
+			INC DPTR
+			;
+			XCH		A, DPL
+			XCH		A, R2
+			XCH		A, DPL
+			XCH		A, DPH
+			XCH		A, R3
+			XCH		A, DPH
+			;
+			DJNZ	R7,	AESMIXCOLSA
+			;RESTORE REGISTERS & RETURN
+			POP		ACC
+			MOV		R1, A
+			POP		ACC
+			MOV		R0, A
+			POP		ACC
+			MOV		R7, A
+			POP		ACC
+			MOV		R6, A
+			POP		ACC
+			MOV		R5, A
+			POP		ACC
+			MOV		R4, A
+			POP		ACC
+			MOV		R3, A
+			POP		ACC
+			MOV		R2, A
+			POP		DPH
+			POP		DPL
+			RET
+	ENDP
+
+	;SHIFTS ROWS
+	;ON ENTRY:
+	;	A		= SHIFT TYPE
+	;		A	= 0x00 FOR SHIFT
+	;		A	= 0xFF FOR INVERSE SHIFT
+	;	R0	= IN STATE ADDRESS LSB
+	;	R1	= IN STATE ADDRESS MSB
+	;	R2	= OUT STATE ADDRESS LSB
+	;	R3	= OUT STATE ADDRESS MSB
+	;ON RETURN:
+	;	R0	= VALUE ON ENTRY
+	;	R1	= VALUE ON ENTRY
+	;	R2	= VALUE ON ENTRY
+	;	R3	= VALUE ON ENTRY
+	AESSHIFTROWS	PROC
+			;SAVE REGISTERS
+			PUSH	B
+			PUSH	DPL
+			PUSH	DPH
+			XCH		A, R4
+			PUSH	ACC
+			MOV		A, R5
+			PUSH	ACC
+			MOV		A, R7
+			PUSH	ACC
+			;INTIIALIZE COUNTER
+			MOV		R7, #0x10
+			;LOAD POINTER TO SHIFT TABLE
+			MOV		DPTR, #AESSHIFTS
+			MOV		A, R4
+			JZ		AESSHIFTROWSA
+			;INVERSE SHIFT TABLE
+			MOV		DPTR, #AESINVSHIFTS
+		AESSHIFTROWSA:
+			MOV		R4, DPL
+			MOV		R5, DPH
+		AESSHIFTA:
+			;CALCULATE IN STATE ADDRESS
+			MOV		A, R7
+			DEC		A
+			ADD		A, R0
+			MOV		DPL, A
+			CLR		A
+			ADDC	A, R1
+			MOV		DPH, A
+			;LOAD BYTE FROM IN STATE
+			MOVX	A, @DPTR
+			MOV		B, A
+			;LOAD BYTE FROM SHIFT TABLE
+			MOV		A, R7
+			DEC		A
+			MOV		DPL, R4
+			MOV		DPH, R5
+			MOVC	A, @A+DPTR
+			;CALCULATE OUT STATE ADDRESS
+			ADD		A, R2
+			MOV		DPL, A
+			CLR		A
+			ADDC	A, R3
+			MOV		DPH, A
+			;STORE BYTE IN OUT STATE
+			MOV		A, B
+			MOVX	@DPTR, A
+			DJNZ	R7, AESSHIFTA
+			;RESTORE REGISTERS & RETURN
+			POP		ACC
+			MOV		R7, A
+			POP		ACC
+			MOV		R5, A
+			POP		ACC
+			MOV		R4, A
+			POP		DPH
+			POP		DPL
+			POP		B
+			RET
+	ENDP
+
+	;SUBSTITUTES
+	;ON ENTRY:
+	;	DPTR	= STATE ADDRESS
+	;ON RETURN:
+	;	DPTR	= VALUE ON ENTRY
+	AESINVSUBBYTES	PROC
+			;SAVE REGISTERS
+			PUSH	ACC
+			PUSH	DPL
+			PUSH	DPH
+			MOV		A, R0
+			PUSH	ACC
+			;LOAD BYTE COUNT
+			MOV		R0, #0x10
+		AESINVSUBBYTESA:
+			;LOAD BYTE FROM STATE
+			MOVX	A, @DPTR
+			PUSH	DPL
+			PUSH	DPH
+			;LOAD SUBSTITUTE BYTE FROM LOOKUP TABLE
+			MOV		DPTR, #AESINVSBOX
+			MOVC	A, @A+DPTR
+			;STORE BYTE IN STATE
+			POP		DPH
+			POP		DPL
+			MOVX	@DPTR, A
+			INC		DPTR
+			;
+			DJNZ	R0, AESINVSUBBYTESA
+			;RESTORE REGISTERS & RETURN
+			POP		ACC
+			MOV		R0, A
+			POP		DPH
+			POP		DPL
+			POP		ACC
+			RET
+	ENDP
+
+	;SUBSTITUTES
+	;ON ENTRY:
+	;	DPTR	= STATE ADDRESS
+	;ON RETURN:
+	;	DPTR	= VALUE ON ENTRY
+	AESSUBBYTES	PROC
+			;SAVE REGISTERS
+			PUSH	ACC
+			PUSH	DPL
+			PUSH	DPH
+			MOV		A, R0
+			PUSH	ACC
+			;LOAD BYTE COUNT
+			MOV		R0, #0x10
+		AESSUBBYTESA:
+			;LOAD BYTE FROM STATE
+			MOVX	A, @DPTR
+			PUSH	DPL
+			PUSH	DPH
+			;LOAD SUBSTITUTE BYTE FROM LOOKUP TABLE
+			MOV		DPTR, #AESSBOX
+			MOVC	A, @A+DPTR
+			;STORE BYTE IN STATE
+			POP		DPH
+			POP		DPL
+			MOVX	@DPTR, A
+			INC		DPTR
+			;
+			DJNZ	R0, AESSUBBYTESA
+			;RESTORE REGISTERS & RETURN
+			POP		ACC
+			MOV		R0, A
+			POP		DPH
+			POP		DPL
+			POP		ACC
+			RET
+	ENDP
+
+	;ON ENTRY
+	;	R4	= WORD BYTE 0 (LSB)
+	;	R5	= WORD BYTE 1
+	;	R6	= WORD BYTE 2
+	;	R7	= WORD BYTE 3 (MSB)
+	;ON RETURN:
+	;	R4	= SUBSTITUTED BYTE 0 (LSB)
+	;	R5	= SUBSTITUTED BYTE 1
+	;	R6	= SUBSTITUTED BYTE 2
+	;	R7	= SUBSTITUTED BYTE 3 (MSB)
+	AESSUBWORD	PROC
+			;SAVE REGISTERS
+			PUSH	DPL
+			PUSH	DPH
+			;SUBSTITUTE BYTES
+			MOV		DPTR, #AESSBOX
+			MOV		A, R4
+			MOVC	A, @A+DPTR
+			MOV		R4, A
+			MOV		A, R5
+			MOVC	A, @A+DPTR
+			MOV		R5, A
+			MOV		A, R6
+			MOVC	A, @A+DPTR
+			MOV		R6, A
+			MOV		A, R7
+			MOVC	A, @A+DPTR
+			MOV		R7, A
+			;RESTORE REGISTERS & RETURN
+			POP		DPH
+			POP		DPL
+			RET
+	ENDP
+
+	;LOADS THE WORD POINTED TO BY DPTR INTO R7 - R4
+	;ON ENTRY:
+	;	DPTR = ADDRESS
+	;ON RETURN:
+	;	DPTR	= VALUE ON ENTRY + 4
+	;	R4		= WORD BYTE 0 (LSB)
+	;	R5		= WORD BYTE 1
+	;	R6		= WORD BYTE 2
+	;	R7		= WORD BYTE 3 (MSB)
+	AESWORDLOAD	PROC
+			MOVX	A, @DPTR
+			MOV		R7, A
+			INC		DPTR
+			MOVX	A, @DPTR
+			MOV		R6, A
+			INC		DPTR
+			MOVX	A, @DPTR
+			MOV		R5, A
+			INC		DPTR
+			MOVX	A, @DPTR
+			MOV		R4, A
+			INC		DPTR
+			RET
+	ENDP
+
+	;STORES THE WORD IN R7 - R4 AT THE LOCATION POINTED TO BY DPTR
+	;ON ENTRY:
+	;	DPTR = ADDRESS
+	;	R4		= WORD BYTE 0 (LSB)
+	;	R5		= WORD BYTE 1
+	;	R6		= WORD BYTE 2
+	;	R7		= WORD BYTE 3 (MSB)
+	;ON RETURN:
+	;	DPTR	= VALUE ON ENTRY + 4
+	;	R4		= VALUE ON ENTRY
+	;	R5		= VALUE ON ENTRY
+	;	R6		= VALUE ON ENTRY
+	;	R7		= VALUE ON ENTRY
+	AESWORDSTORE	PROC
+			MOV		A, R7
+			MOVX	@DPTR, A
+			INC		DPTR
+			MOV		A, R6
+			MOVX	@DPTR, A
+			INC		DPTR
+			MOV		A, R5
+			MOVX	@DPTR, A
+			INC		DPTR
+			MOV		A, R4
+			MOVX	@DPTR, A
+			INC		DPTR
+			RET
+	ENDP
+
+
+	DPTRXCHG01	PROC
+			XCH		A, R0
+			XCH		A, DPL
+			XCH		A, R0
+			XCH		A, R1
+			XCH		A, DPH
+			XCH		A, R1
+			RET
+	ENDP
+
+
+	AESSBOX:
+	DB	0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76
+  DB	0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0
+  DB	0xb7, 0xfd, 0x93, 0x26, 0x36, 0x3f, 0xf7, 0xcc, 0x34, 0xa5, 0xe5, 0xf1, 0x71, 0xd8, 0x31, 0x15
+  DB	0x04, 0xc7, 0x23, 0xc3, 0x18, 0x96, 0x05, 0x9a, 0x07, 0x12, 0x80, 0xe2, 0xeb, 0x27, 0xb2, 0x75
+  DB	0x09, 0x83, 0x2c, 0x1a, 0x1b, 0x6e, 0x5a, 0xa0, 0x52, 0x3b, 0xd6, 0xb3, 0x29, 0xe3, 0x2f, 0x84
+  DB	0x53, 0xd1, 0x00, 0xed, 0x20, 0xfc, 0xb1, 0x5b, 0x6a, 0xcb, 0xbe, 0x39, 0x4a, 0x4c, 0x58, 0xcf
+  DB	0xd0, 0xef, 0xaa, 0xfb, 0x43, 0x4d, 0x33, 0x85, 0x45, 0xf9, 0x02, 0x7f, 0x50, 0x3c, 0x9f, 0xa8
+  DB	0x51, 0xa3, 0x40, 0x8f, 0x92, 0x9d, 0x38, 0xf5, 0xbc, 0xb6, 0xda, 0x21, 0x10, 0xff, 0xf3, 0xd2
+  DB	0xcd, 0x0c, 0x13, 0xec, 0x5f, 0x97, 0x44, 0x17, 0xc4, 0xa7, 0x7e, 0x3d, 0x64, 0x5d, 0x19, 0x73
+  DB	0x60, 0x81, 0x4f, 0xdc, 0x22, 0x2a, 0x90, 0x88, 0x46, 0xee, 0xb8, 0x14, 0xde, 0x5e, 0x0b, 0xdb
+  DB	0xe0, 0x32, 0x3a, 0x0a, 0x49, 0x06, 0x24, 0x5c, 0xc2, 0xd3, 0xac, 0x62, 0x91, 0x95, 0xe4, 0x79
+  DB	0xe7, 0xc8, 0x37, 0x6d, 0x8d, 0xd5, 0x4e, 0xa9, 0x6c, 0x56, 0xf4, 0xea, 0x65, 0x7a, 0xae, 0x08
+  DB	0xba, 0x78, 0x25, 0x2e, 0x1c, 0xa6, 0xb4, 0xc6, 0xe8, 0xdd, 0x74, 0x1f, 0x4b, 0xbd, 0x8b, 0x8a
+  DB	0x70, 0x3e, 0xb5, 0x66, 0x48, 0x03, 0xf6, 0x0e, 0x61, 0x35, 0x57, 0xb9, 0x86, 0xc1, 0x1d, 0x9e
+  DB	0xe1, 0xf8, 0x98, 0x11, 0x69, 0xd9, 0x8e, 0x94, 0x9b, 0x1e, 0x87, 0xe9, 0xce, 0x55, 0x28, 0xdf
+	DB	0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16
+
+	AESINVSBOX:
+	DB	0x52, 0x09, 0x6a, 0xd5, 0x30, 0x36, 0xa5, 0x38, 0xbf, 0x40, 0xa3, 0x9e, 0x81, 0xf3, 0xd7, 0xfb
+  DB	0x7c, 0xe3, 0x39, 0x82, 0x9b, 0x2f, 0xff, 0x87, 0x34, 0x8e, 0x43, 0x44, 0xc4, 0xde, 0xe9, 0xcb
+  DB	0x54, 0x7b, 0x94, 0x32, 0xa6, 0xc2, 0x23, 0x3d, 0xee, 0x4c, 0x95, 0x0b, 0x42, 0xfa, 0xc3, 0x4e
+  DB	0x08, 0x2e, 0xa1, 0x66, 0x28, 0xd9, 0x24, 0xb2, 0x76, 0x5b, 0xa2, 0x49, 0x6d, 0x8b, 0xd1, 0x25
+  DB	0x72, 0xf8, 0xf6, 0x64, 0x86, 0x68, 0x98, 0x16, 0xd4, 0xa4, 0x5c, 0xcc, 0x5d, 0x65, 0xb6, 0x92
+  DB	0x6c, 0x70, 0x48, 0x50, 0xfd, 0xed, 0xb9, 0xda, 0x5e, 0x15, 0x46, 0x57, 0xa7, 0x8d, 0x9d, 0x84
+  DB	0x90, 0xd8, 0xab, 0x00, 0x8c, 0xbc, 0xd3, 0x0a, 0xf7, 0xe4, 0x58, 0x05, 0xb8, 0xb3, 0x45, 0x06
+  DB	0xd0, 0x2c, 0x1e, 0x8f, 0xca, 0x3f, 0x0f, 0x02, 0xc1, 0xaf, 0xbd, 0x03, 0x01, 0x13, 0x8a, 0x6b
+  DB	0x3a, 0x91, 0x11, 0x41, 0x4f, 0x67, 0xdc, 0xea, 0x97, 0xf2, 0xcf, 0xce, 0xf0, 0xb4, 0xe6, 0x73
+  DB	0x96, 0xac, 0x74, 0x22, 0xe7, 0xad, 0x35, 0x85, 0xe2, 0xf9, 0x37, 0xe8, 0x1c, 0x75, 0xdf, 0x6e
+  DB	0x47, 0xf1, 0x1a, 0x71, 0x1d, 0x29, 0xc5, 0x89, 0x6f, 0xb7, 0x62, 0x0e, 0xaa, 0x18, 0xbe, 0x1b
+  DB	0xfc, 0x56, 0x3e, 0x4b, 0xc6, 0xd2, 0x79, 0x20, 0x9a, 0xdb, 0xc0, 0xfe, 0x78, 0xcd, 0x5a, 0xf4
+  DB	0x1f, 0xdd, 0xa8, 0x33, 0x88, 0x07, 0xc7, 0x31, 0xb1, 0x12, 0x10, 0x59, 0x27, 0x80, 0xec, 0x5f
+  DB	0x60, 0x51, 0x7f, 0xa9, 0x19, 0xb5, 0x4a, 0x0d, 0x2d, 0xe5, 0x7a, 0x9f, 0x93, 0xc9, 0x9c, 0xef
+  DB	0xa0, 0xe0, 0x3b, 0x4d, 0xae, 0x2a, 0xf5, 0xb0, 0xc8, 0xeb, 0xbb, 0x3c, 0x83, 0x53, 0x99, 0x61
+	DB	0x17, 0x2b, 0x04, 0x7e, 0xba, 0x77, 0xd6, 0x26, 0xe1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0c, 0x7d
+
+	AESINVSHIFTS:
+	DB	0x00, 0x05, 0x0A, 0x0F
+	DB	0x04, 0x09,	0x0E,	0x03
+	DB	0x08,	0x0D,	0x02, 0x07
+	DB	0x0C, 0x01, 0x06, 0x0B
+
+	AESSHIFTS:
+	DB	0x00, 0x0D, 0x0A, 0x07
+	DB	0x04, 0x01,	0x0E,	0x0B
+	DB	0x08,	0x05,	0x02, 0x0F
+	DB	0x0C, 0x09, 0x06, 0x03
+
+	AESRCONST:
+	DB	0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36
+
+END
